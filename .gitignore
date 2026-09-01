@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Production build output
+dist/
+build/
+coverage/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment and Secrets (CRITICAL)
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
+
+# Service accounts & Private Credentials
+*service-account*.json
+*credentials*.json
+*secret*.json
+*key*.json
+*.pem
+*.key
+*.cert
+*.p12
+
+
+# Operating System & IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+# Archives and internal
+*.zip
+*.tar.gz
+.gemini/
+.system_generated/
+
+# Firebase applet config
+firebase-applet-config.json

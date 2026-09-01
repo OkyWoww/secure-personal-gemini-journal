@@ -1,0 +1,6 @@
+{
+  "name": "Secure Personal Gemini Journal",
+  "description": "A privacy-first personal journal with field-level encryption, client-side PII masking, and Gemini AI insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

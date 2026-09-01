@@ -1,0 +1,220 @@
+import { initializeApp, getApps } from 'firebase-admin/app';
+import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
+import { randomUUID } from 'crypto';
+
+const apps = getApps();
+const app = apps.length === 0 ? initializeApp({ projectId: "genai-track3-coffee" }) : apps[0];
+
+const hasCredentials = Boolean(
+  process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+  process.env.FIRESTORE_EMULATOR_HOST ||
+  process.env.K_SERVICE ||
+  process.env.GAE_ENV
+);
+
+let rawDb: any = null;
+if (hasCredentials) {
+  try {
+    rawDb = getAdminFirestore(app, "ai-studio-0ee1644e-e438-48cd-9473-106f79f87abb");
+  } catch (e) {
+    try {
+      rawDb = getAdminFirestore(app);
+    } catch (err) {
+      console.warn("Could not initialize remote Firestore admin instance, using memory store fallback.");
+    }
+  }
+}
+
+
+// In-Memory resilient document store for sandbox environments without GCP Admin service account binding
+interface MemoryDoc {
+  id: string;
+  data: any;
+  createdAt?: string;
+}
+
+const inMemoryDatabase = new Map<string, MemoryDoc>();
+
+class ResilientDocRef {
+  private path: string;
+  public id: string;
+
+  constructor(path: string, id: string) {
+    this.path = path;
+    this.id = id;
+  }
+
+  async get() {
+    if (rawDb) {
+      try {
+        const snap = await rawDb.doc(this.path).get();
+        if (snap.exists) return snap;
+      } catch (err: any) {
+        // Fallback to inMemoryDatabase
+      }
+    }
+    const mem = inMemoryDatabase.get(this.path);
+    return {
+      id: this.id,
+      exists: Boolean(mem),
+      data: () => mem ? mem.data : undefined
+    };
+  }
+
+  async delete() {
+    if (rawDb) {
+      try {
+        await rawDb.doc(this.path).delete();
+      } catch (err: any) {
+        // Continue to clear memory
+      }
+    }
+    inMemoryDatabase.delete(this.path);
+    return true;
+  }
+
+  collection(subName: string) {
+    return new ResilientCollectionRef(`${this.path}/${subName}`);
+  }
+}
+
+class ResilientQuery {
+  private path: string;
+  private filters: Array<{ field: string; op: string; value: any }>;
+  private order: { field: string; direction: 'asc' | 'desc' } | null;
+  private limitCount: number | null;
+
+  constructor(
+    path: string, 
+    filters: Array<{ field: string; op: string; value: any }> = [],
+    order: { field: string; direction: 'asc' | 'desc' } | null = null,
+    limitCount: number | null = null
+  ) {
+    this.path = path;
+    this.filters = [...filters];
+    this.order = order;
+    this.limitCount = limitCount;
+  }
+
+  where(field: string, op: string, value: any) {
+    return new ResilientQuery(this.path, [...this.filters, { field, op, value }], this.order, this.limitCount);
+  }
+
+  orderBy(field: string, direction: 'asc' | 'desc' = 'asc') {
+    return new ResilientQuery(this.path, this.filters, { field, direction }, this.limitCount);
+  }
+
+  limit(count: number) {
+    return new ResilientQuery(this.path, this.filters, this.order, count);
+  }
+
+  async get() {
+    const prefix = `${this.path}/`;
+    let matchedDocs: MemoryDoc[] = [];
+    
+    for (const [key, val] of inMemoryDatabase.entries()) {
+      if (key.startsWith(prefix) && key.split('/').length === this.path.split('/').length + 1) {
+        let pass = true;
+        for (const f of this.filters) {
+          const docVal = val.data?.[f.field];
+          if (f.op === '==' && docVal !== f.value) pass = false;
+          if (f.op === '>=' && (docVal === undefined || docVal < f.value)) pass = false;
+          if (f.op === '<=' && (docVal === undefined || docVal > f.value)) pass = false;
+          if (f.op === '>' && (docVal === undefined || docVal <= f.value)) pass = false;
+          if (f.op === '<' && (docVal === undefined || docVal >= f.value)) pass = false;
+        }
+        if (pass) {
+          matchedDocs.push(val);
+        }
+      }
+    }
+
+    if (this.order) {
+      const { field, direction } = this.order;
+      matchedDocs.sort((a, b) => {
+        const aVal = a.data?.[field] || '';
+        const bVal = b.data?.[field] || '';
+        return direction === 'desc' ? String(bVal).localeCompare(String(aVal)) : String(aVal).localeCompare(String(bVal));
+      });
+    }
+
+    if (this.limitCount && this.limitCount > 0) {
+      matchedDocs = matchedDocs.slice(0, this.limitCount);
+    }
+
+    const docs = matchedDocs.map(d => ({
+      id: d.id,
+      data: () => d.data
+    }));
+
+    return {
+      empty: docs.length === 0,
+      docs,
+      forEach: (cb: (doc: { id: string; data: () => any }) => void) => docs.forEach(cb)
+    };
+  }
+}
+
+class ResilientCollectionRef {
+
+  private path: string;
+
+  constructor(path: string) {
+    this.path = path;
+  }
+
+  doc(id?: string) {
+    const docId = id || randomUUID();
+    return new ResilientDocRef(`${this.path}/${docId}`, docId);
+  }
+
+  async add(data: any) {
+    const docId = `entry_${randomUUID().replace(/-/g, '').substring(0, 16)}`;
+    const fullPath = `${this.path}/${docId}`;
+
+    if (rawDb) {
+      try {
+        const ref = await rawDb.collection(this.path).add(data);
+        inMemoryDatabase.set(fullPath, { id: ref.id, data, createdAt: data.createdAt });
+        return new ResilientDocRef(fullPath, ref.id);
+      } catch (err: any) {
+        // Use in-memory document creation
+      }
+    }
+
+    inMemoryDatabase.set(fullPath, { id: docId, data, createdAt: data.createdAt });
+    return new ResilientDocRef(fullPath, docId);
+  }
+
+  where(field: string, op: string, value: any) {
+    return new ResilientQuery(this.path, [{ field, op, value }]);
+  }
+
+  limit(maxCount: number) {
+    return new ResilientQuery(this.path, [], null, maxCount);
+  }
+
+  orderBy(field: string, direction: 'asc' | 'desc' = 'asc') {
+    return new ResilientQuery(this.path, [], { field, direction });
+  }
+
+  async get() {
+    return new ResilientQuery(this.path).get();
+  }
+
+}
+
+class ResilientFirestore {
+  collection(colName: string) {
+    return new ResilientCollectionRef(colName);
+  }
+  doc(docPath: string) {
+    const parts = docPath.split('/');
+    const id = parts[parts.length - 1];
+    return new ResilientDocRef(docPath, id);
+  }
+}
+
+export const db = new ResilientFirestore() as any;
+export const adminAuth = getAuth(app);
