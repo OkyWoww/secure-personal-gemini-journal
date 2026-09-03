@@ -14,8 +14,7 @@ let appOptions: any = { projectId: process.env.FIREBASE_PROJECT_ID || "genai-tra
 const possibleCredentialPaths = [
   process.env.GOOGLE_APPLICATION_CREDENTIALS,
   path.resolve(process.cwd(), 'service-account.json'),
-  path.resolve(__dirname, '../../service-account.json'),
-  path.resolve(__dirname, '../service-account.json'),
+  path.resolve(process.cwd(), 'backend/service-account.json'),
   path.resolve(process.cwd(), 'service-account.json.json'),
 ].filter(Boolean) as string[];
 
