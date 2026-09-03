@@ -141,7 +141,7 @@ function OfflineBanner({ isForcedOffline }: { isForcedOffline: boolean }) {
 }
 
 function GoogleAuthScreen() {
-  const { signInWithGoogle, signInAsDevUser } = useAuth();
+  const { signInWithGoogle } = useAuth();
   const [error, setError] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
 
@@ -226,30 +226,6 @@ function GoogleAuthScreen() {
           {isSigningIn ? 'Connecting to Google...' : 'Continue with Google'}
         </button>
 
-        {/* Development Multi-Account Quick Switcher */}
-        {import.meta.env.DEV && (
-          <div className="mt-4 pt-4 border-t border-dashed border-slate-200">
-            <p className="text-3xs font-semibold text-slate-400 uppercase tracking-wider mb-2 text-center">
-              🧪 Simulasi Akun Dev (Untuk Uji Coba Multi-User & IDOR)
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => signInAsDevUser('user.lain@gmail.com')}
-                className="py-2 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors text-center"
-              >
-                👤 Akun Lain (User Biasa)
-              </button>
-              <button
-                type="button"
-                onClick={() => signInAsDevUser('okywoww@gmail.com')}
-                className="py-2 px-2 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-medium transition-colors text-center"
-              >
-                🛡️ Admin (okywoww)
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Security & Privacy Pillars */}
         <div className="mt-8 pt-6 border-t border-slate-100 space-y-3 text-xs text-slate-500">
