@@ -1,31 +1,68 @@
-import { initializeApp, getApps } from 'firebase-admin/app';
+import * as dotenv from 'dotenv';
+dotenv.config();
+
+import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore as getAdminFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { randomUUID } from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+
+let appOptions: any = { projectId: process.env.FIREBASE_PROJECT_ID || "genai-track3-coffee" };
+
+// Detect and load service account credentials if available
+const possibleCredentialPaths = [
+  process.env.GOOGLE_APPLICATION_CREDENTIALS,
+  path.resolve(process.cwd(), 'service-account.json'),
+  path.resolve(__dirname, '../../service-account.json'),
+  path.resolve(__dirname, '../service-account.json'),
+  path.resolve(process.cwd(), 'service-account.json.json'),
+].filter(Boolean) as string[];
+
+for (const p of possibleCredentialPaths) {
+  const resolvedPath = path.resolve(p);
+  if (fs.existsSync(resolvedPath)) {
+    try {
+      const sa = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+      appOptions.credential = cert(sa);
+      if (sa.project_id) {
+        appOptions.projectId = sa.project_id;
+      }
+      console.log(`[Firebase Admin] Loaded service account credentials from ${resolvedPath}`);
+      break;
+    } catch (e: any) {
+      console.warn(`[Firebase Admin] Failed to parse service account from ${resolvedPath}:`, e.message);
+    }
+  }
+}
 
 const apps = getApps();
-const app = apps.length === 0 ? initializeApp({ projectId: "genai-track3-coffee" }) : apps[0];
+const app = apps.length === 0 ? initializeApp(appOptions) : apps[0];
 
 const hasCredentials = Boolean(
+  appOptions.credential ||
   process.env.GOOGLE_APPLICATION_CREDENTIALS ||
   process.env.FIRESTORE_EMULATOR_HOST ||
   process.env.K_SERVICE ||
   process.env.GAE_ENV
 );
 
+const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || "ai-studio-0ee1644e-e438-48cd-9473-106f79f87abb";
+
 let rawDb: any = null;
 if (hasCredentials) {
   try {
-    rawDb = getAdminFirestore(app, "ai-studio-0ee1644e-e438-48cd-9473-106f79f87abb");
+    rawDb = getAdminFirestore(app, FIRESTORE_DATABASE_ID);
+    console.log(`[Firebase Admin] Initialized Firestore database: ${FIRESTORE_DATABASE_ID}`);
   } catch (e) {
     try {
       rawDb = getAdminFirestore(app);
-    } catch (err) {
-      console.warn("Could not initialize remote Firestore admin instance, using memory store fallback.");
+      console.log("[Firebase Admin] Initialized default Firestore database");
+    } catch (err: any) {
+      console.warn("[Firebase Admin] Could not initialize remote Firestore instance, using in-memory fallback:", err.message);
     }
   }
 }
-
 
 // In-Memory resilient document store for sandbox environments without GCP Admin service account binding
 interface MemoryDoc {
@@ -51,7 +88,7 @@ class ResilientDocRef {
         const snap = await rawDb.doc(this.path).get();
         if (snap.exists) return snap;
       } catch (err: any) {
-        // Fallback to inMemoryDatabase
+        console.warn(`[ResilientFirestore] doc.get() error on ${this.path}, falling back to memory:`, err.message);
       }
     }
     const mem = inMemoryDatabase.get(this.path);
@@ -62,12 +99,26 @@ class ResilientDocRef {
     };
   }
 
+  async set(data: any) {
+    if (rawDb) {
+      try {
+        await rawDb.doc(this.path).set(data);
+        inMemoryDatabase.set(this.path, { id: this.id, data, createdAt: data.createdAt });
+        return true;
+      } catch (err: any) {
+        console.warn(`[ResilientFirestore] doc.set() error on ${this.path}:`, err.message);
+      }
+    }
+    inMemoryDatabase.set(this.path, { id: this.id, data, createdAt: data.createdAt });
+    return true;
+  }
+
   async delete() {
     if (rawDb) {
       try {
         await rawDb.doc(this.path).delete();
       } catch (err: any) {
-        // Continue to clear memory
+        console.warn(`[ResilientFirestore] doc.delete() error on ${this.path}:`, err.message);
       }
     }
     inMemoryDatabase.delete(this.path);
@@ -110,6 +161,25 @@ class ResilientQuery {
   }
 
   async get() {
+    if (rawDb) {
+      try {
+        let q: any = rawDb.collection(this.path);
+        for (const f of this.filters) {
+          q = q.where(f.field, f.op, f.value);
+        }
+        if (this.order) {
+          q = q.orderBy(this.order.field, this.order.direction);
+        }
+        if (this.limitCount && this.limitCount > 0) {
+          q = q.limit(this.limitCount);
+        }
+        const snap = await q.get();
+        return snap;
+      } catch (err: any) {
+        console.warn(`[ResilientFirestore] Query failed on ${this.path}, falling back to memory store:`, err.message);
+      }
+    }
+
     const prefix = `${this.path}/`;
     let matchedDocs: MemoryDoc[] = [];
     
@@ -157,7 +227,6 @@ class ResilientQuery {
 }
 
 class ResilientCollectionRef {
-
   private path: string;
 
   constructor(path: string) {
@@ -170,19 +239,19 @@ class ResilientCollectionRef {
   }
 
   async add(data: any) {
-    const docId = `entry_${randomUUID().replace(/-/g, '').substring(0, 16)}`;
-    const fullPath = `${this.path}/${docId}`;
-
     if (rawDb) {
       try {
         const ref = await rawDb.collection(this.path).add(data);
+        const fullPath = `${this.path}/${ref.id}`;
         inMemoryDatabase.set(fullPath, { id: ref.id, data, createdAt: data.createdAt });
         return new ResilientDocRef(fullPath, ref.id);
       } catch (err: any) {
-        // Use in-memory document creation
+        console.warn(`[ResilientFirestore] add() failed on ${this.path}, falling back to memory:`, err.message);
       }
     }
 
+    const docId = `entry_${randomUUID().replace(/-/g, '').substring(0, 16)}`;
+    const fullPath = `${this.path}/${docId}`;
     inMemoryDatabase.set(fullPath, { id: docId, data, createdAt: data.createdAt });
     return new ResilientDocRef(fullPath, docId);
   }
@@ -202,7 +271,6 @@ class ResilientCollectionRef {
   async get() {
     return new ResilientQuery(this.path).get();
   }
-
 }
 
 class ResilientFirestore {
