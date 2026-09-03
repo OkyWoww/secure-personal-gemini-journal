@@ -148,12 +148,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       console.warn('Google popup sign-in encountered an issue:', err);
-      // If popup is blocked by browser/iframe restrictions or unauthorized domain, provide auto fallback
-      if (err.code === 'auth/popup-blocked' || err.code === 'auth/unauthorized-domain' || err.code === 'auth/internal-error' || err.code === 'auth/network-request-failed' || err.code === 'auth/invalid-api-key') {
-        // Automatically sign in as development authenticated user
-        await signInAsDevUser('okywoww@gmail.com');
-        return;
-      }
       throw err;
     }
   };
