@@ -66,18 +66,18 @@ const DebugStateToolbar = import.meta.env.DEV
       current: DebugOverrideState; 
       onSelect: (state: DebugOverrideState) => void;
     }) {
-      const [isOpen, setIsOpen] = useState(true);
+      const [isOpen, setIsOpen] = useState(false);
 
       return (
         <aside aria-label="UI States Test Toolbar" className="fixed bottom-4 right-4 z-50 bg-slate-900/95 text-white p-3 rounded-2xl shadow-xl border border-slate-700 backdrop-blur-md text-xs transition-all max-w-xs">
-          <div className="flex items-center justify-between gap-3 mb-2 pb-2 border-b border-slate-800">
+          <div className={`flex items-center justify-between gap-3 ${isOpen ? 'mb-2 pb-2 border-b border-slate-800' : ''}`}>
             <div className="flex items-center gap-1.5 font-semibold text-amber-400">
               <Sliders className="w-3.5 h-3.5" />
               <span>UI State QA Toolbar</span>
             </div>
             <button 
               onClick={() => setIsOpen(!isOpen)}
-              className="text-slate-400 hover:text-white text-3xs uppercase tracking-wider"
+              className="text-slate-400 hover:text-white text-3xs uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 transition-colors"
             >
               {isOpen ? 'Minimize' : 'Expand'}
             </button>
